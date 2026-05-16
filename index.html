@@ -56,7 +56,7 @@
             const result = await response.json();
             if (response.ok) {
                 localStorage.setItem('user', JSON.stringify(result.user)); // Kullanıcıyı hatırla
-                window.location.href = 'index.html'; // Dashboard'a yönlendir
+                window.location.href = 'dashboard.html'; // Dashboard'a yönlendir
             } else {
                 alert(result.message);
             }
