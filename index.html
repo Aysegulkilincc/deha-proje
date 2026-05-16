@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="tr">
+
+<head>
+    <script>
+        // Giriş kontrolü: "user" verisi yoksa login'e atar
+        const userCheck = localStorage.getItem('user');
+        if (!userCheck) {
+            window.location.href = 'login.html';
+        }
+    </script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DEHA | Akıllı Termal Takip</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+    <script src="https://unpkg.com/@lottiefiles/lottie-player@latest/dist/lottie-player.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Quicksand:wght@400;600;700&display=swap');
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Quicksand', sans-serif;
+            background: linear-gradient(-45deg, #e6fffa, #e0f2fe, #fff7ed, #faf5ff);
+            background-size: 400% 400%;
+            animation: gradientBG 15s ease infinite;
+            overflow-x: hidden;
+            overflow-y: auto;
+            min-height: 100vh;
+        }
+
+        @keyframes gradientBG {
+            0% {
+                background-position: 0% 50%
+            }
+
+            50% {
+                background-position: 100% 50%
+            }
+
+            100% {
+                background-position: 0% 50%
+            }
+        }
+
+        /* ===== PARÇACIK (Particle) Canvas ===== */
+        #particle-canvas {
+            position: fixed;
+            inset: 0;
+            z-index: 0;
+            pointer-events: none;
+        }
+
+        /* ===== ATEŞ İMLECİ ===== */
+        #fire-cursor {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 350px;
+            height: 350px;
+            border-radius: 50%;
+            pointer-events: none;
+            z-index: 1;
+            background: radial-gradient(circle, rgba(255, 30, 0, 0.7) 0%, rgba(255, 120, 0, 0.4) 35%, transparent 70%);
+            filter: blur(30px);
+            mix-blend-mode: multiply;
+            will-change: left, top;
+        }
+
+        /* ===== KAYAN ARKA PLAN İKONLARI ===== */
+        .bg-deco {
+            position: absolute;
+            font-size: 90px;
+            opacity: 0.04;
+            user-select: none;
+            z-index: 1;
+            animation: floatDeco 10s ease-in-out infinite;
+        }
+
+        @keyframes floatDeco {
+
+            0%,
+            100% {
+                transform: translateY(0) rotate(0deg) scale(1);
+            }
+
+            25% {
+                transform: translateY(-20px) rotate(5deg) scale(1.05);
+            }
+
+            50% {
+                transform: translateY(-35px) rotate(-5deg) scale(1);
+            }
+
+            75% {
+                transform: translateY(-15px) rotate(3deg) scale(0.95);
+            }
+        }
+
+        /* ===== ANA KART ===== */
+        .baby-card {
+            background: rgba(255, 255, 255, 0.88);
+            backdrop-filter: blur(18px);
+            border-radius: 60px;
+            border: 2px solid rgba(255, 255, 255, 0.6);
+            transition: all 0.6s cubic-bezier(.4, 0, .2, 1);
+            box-shadow: 0 25px 60px rgba(59, 130, 246, 0.1);
+            position: relative;
+            z-index: 10;
+        }
+
+        .glow-normal {
+            box-shadow: 0 0 80px rgba(34, 197, 94, 0.35), 0 20px 60px rgba(34, 197, 94, 0.1);
+        }
+
+        .glow-risk {
+            box-shadow: 0 0 80px rgba(245, 158, 11, 0.45), 0 20px 60px rgba(245, 158, 11, 0.15);
+        }
+
+        .glow-emergency {
+            box-shadow: 0 0 100px rgba(239, 68, 68, 0.55), 0 20px 60px rgba(239, 68, 68, 0.2);
+            animation: shakeCard 0.4s ease-in-out;
+        }
+
+        @keyframes shakeCard {
+
+            0%,
+            100% {
+                transform: translateX(0)
+            }
+
+            20% {
+                transform: translateX(-6px)
+            }
+
+            40% {
+                transform: translateX(6px)
+            }
+
+            60% {
+                transform: translateX(-4px)
+            }
+
+            80% {
+                transform: translateX(4px)
+            }
+        }
+
+        /* ===== GİRİŞ ANİMASYONU ===== */
+        .animate-pop-in {
+            animation: popIn 1s cubic-bezier(.26, .53, .74, 1.48) forwards;
+            opacity: 0;
+        }
+
+        @keyframes popIn {
+            0% {
+                opacity: 0;
+                transform: scale(0.3) translateY(80px) rotateX(15deg);
+            }
+
+            60% {
+                opacity: 1;
+                transform: scale(1.05) translateY(-10px) rotateX(0deg);
+            }
+
+            100% {
+                opacity: 1;
+                transform: scale(1) translateY(0) rotateX(0deg);
+            }
+        }
+
+        /* ===== SICAKLIK SAYI ANİMASYONU ===== */
+        .temp-pop {
+            animation: tempBounce 0.5s cubic-bezier(.68, -.55, .27, 1.55);
+        }
+
+        @keyframes tempBounce {
+            0% {
+                transform: scale(1);
+            }
+
+            40% {
+                transform: scale(1.15);
+            }
+
+            100% {
+                transform: scale(1);
+            }
+        }
+
+        /* ===== NABIZ HALKASİ ===== */
+        .pulse-ring {
+            position: absolute;
+            inset: -8px;
+            border-radius: 50%;
+            border: 3px solid rgba(34, 197, 94, 0.4);
+            animation: pulseRing 2s ease-out infinite;
+            pointer-events: none;
+        }
+
+        @keyframes pulseRing {
+            0% {
+                transform: scale(1);
+                opacity: 0.6;
+            }
+
+            100% {
+                transform: scale(1.5);
+                opacity: 0;
+            }
+        }
+
+        /* ===== KART İÇ ELEMENTLERİ STAGGER ANİMASYONU ===== */
+        .stagger-1 {
+            animation: slideUp 0.6s ease-out 0.2s both;
+        }
+
+        .stagger-2 {
+            animation: slideUp 0.6s ease-out 0.4s both;
+        }
+
+        .stagger-3 {
+            animation: slideUp 0.6s ease-out 0.6s both;
+        }
+
+        .stagger-4 {
+            animation: slideUp 0.6s ease-out 0.8s both;
+        }
+
+        .stagger-5 {
+            animation: slideUp 0.6s ease-out 1.0s both;
+        }
+
+        @keyframes slideUp {
+            0% {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+
+            100% {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* ===== HOVER EFEKTLER ===== */
+        .hover-lift {
+            transition: transform 0.3s, box-shadow 0.3s;
+        }
+
+        .hover-lift:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 12px 30px rgba(0, 0, 0, 0.1);
+        }
+
+        /* ===== GEÇMİŞ VERİ SATIRI ANİMASYONU ===== */
+        .history-row {
+            animation: fadeSlideIn 0.4s ease-out both;
+        }
+
+        @keyframes fadeSlideIn {
+            0% {
+                opacity: 0;
+                transform: translateX(-20px);
+            }
+
+            100% {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+    </style>
+</head>
+
+<body class="flex items-center justify-center p-4 min-h-screen">
+
+    <!-- Parçacık Animasyonu Canvas -->
+    <canvas id="particle-canvas"></canvas>
+
+    <!-- Ateş İmleci -->
+    <div id="fire-cursor"></div>
+
+    <!-- Kayan Arka Plan İkonları -->
+    <div class="bg-deco" style="top:8%; left:8%; animation-duration:7s;">🍼</div>
+    <div class="bg-deco" style="top:55%; left:82%; animation-duration:11s; animation-direction:reverse;">🧸</div>
+    <div class="bg-deco" style="bottom:12%; left:18%; animation-duration:9s; animation-delay:1s;">☁️</div>
+    <div class="bg-deco" style="top:25%; right:12%; animation-duration:8s; animation-delay:2s;">⭐</div>
+    <div class="bg-deco" style="top:75%; left:45%; animation-duration:12s; animation-delay:3s; font-size:70px;">🌙</div>
+    <div class="bg-deco" style="top:5%; right:40%; animation-duration:10s; animation-delay:1.5s; font-size:60px;">💤
+    </div>
+
+    <!-- Ana Kart -->
+    <div class="baby-card w-full max-w-md p-8 animate-pop-in glow-normal" id="main-card">
+
+        <!-- Üst Bar -->
+        <div class="flex justify-between items-center mb-6 stagger-1">
+            <div class="flex items-center gap-2">
+                <span class="text-2xl" style="animation: floatDeco 3s ease-in-out infinite;">👶</span>
+                <span class="text-sm font-bold text-gray-500 tracking-tight">DEHA <span
+                        class="font-light text-blue-400">Akıllı Takip</span></span>
+            </div>
+            <div id="status-dot"
+                class="flex items-center text-[11px] font-bold text-gray-500 bg-gray-100 px-3 py-1.5 rounded-full shadow-inner transition-all duration-500">
+                <span class="w-2.5 h-2.5 bg-gray-400 rounded-full mr-2 border-2 border-white"></span> BAĞLANIYOR
+            </div>
+        </div>
+
+        <!-- Sıcaklık Ana Alanı -->
+        <div class="text-center relative bg-gray-50 rounded-[2.5rem] p-6 border border-gray-100 shadow-inner stagger-2">
+            <div class="w-32 h-32 mx-auto mb-2 flex items-center justify-center relative">
+                <!-- Nabız Halkası -->
+                <div class="pulse-ring" id="pulse-ring"></div>
+                <lottie-player id="baby-anim" src="https://assets3.lottiefiles.com/packages/lf20_4wscw465.json"
+                    background="transparent" speed="1" loop autoplay></lottie-player>
+            </div>
+            <h1 class="text-gray-500 text-xs font-bold uppercase tracking-widest mb-1">Anlık Ateş</h1>
+            <div id="live-temp" class="text-8xl font-bold text-gray-900 tracking-tighter mb-2"
+                style="font-family:sans-serif;">
+                --.-<span class="text-5xl text-gray-300 relative -top-8">°C</span>
+            </div>
+            <div class="inline-block px-4 py-1 rounded-full bg-white shadow border border-gray-100">
+                <p id="temp-message" class="text-sm font-semibold text-gray-400">Veri bekleniyor...</p>
+            </div>
+        </div>
+
+        <!-- Min / Max -->
+        <div class="grid grid-cols-2 gap-4 mt-6 stagger-3">
+            <div class="bg-blue-50/50 p-4 rounded-[2rem] border border-blue-100 text-center hover-lift">
+                <p class="text-[11px] font-bold text-blue-400 uppercase tracking-wider mb-1">Minimum</p>
+                <p id="min-temp" class="text-2xl font-bold text-blue-700">--.-°</p>
+            </div>
+            <div class="bg-red-50/50 p-4 rounded-[2rem] border border-red-100 text-center hover-lift">
+                <p class="text-[11px] font-bold text-red-400 uppercase tracking-wider mb-1">Maximum</p>
+                <p id="max-temp" class="text-2xl font-bold text-red-700">--.-°</p>
+            </div>
+        </div>
+
+        <!-- Ateş Geçmişi Grafiği -->
+        <div class="mt-6 bg-white/60 p-4 rounded-[2rem] border border-gray-100 shadow-sm stagger-4 hover-lift">
+            <p class="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2 text-center">Ateş Geçmişi</p>
+            <div class="h-24 w-full"><canvas id="tempChart"></canvas></div>
+        </div>
+
+        <!-- Son Ölçümler Listesi -->
+        <div class="mt-4 stagger-5">
+            <p class="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2 text-center">Son Ölçümler</p>
+            <div id="history-list" class="space-y-1.5 max-h-28 overflow-y-auto rounded-2xl px-1"></div>
+        </div>
+
+        <!-- Footer -->
+        <div class="mt-6 text-center text-[11px] text-gray-400 font-medium tracking-wide stagger-5">
+            <strong class="text-blue-500">DEHA</strong> | O mışıl mışıl uyurken, aklınız onda kalmasın.
+        </div>
+    </div>
+
+    <script>
+        // ============ 1. PARÇACIK SİSTEMİ ============
+        const pCanvas = document.getElementById('particle-canvas');
+        const pCtx = pCanvas.getContext('2d');
+        let particles = [];
+
+        function resizeCanvas() {
+            pCanvas.width = window.innerWidth;
+            pCanvas.height = window.innerHeight;
+        }
+        resizeCanvas();
+        window.addEventListener('resize', resizeCanvas);
+
+        class Particle {
+            constructor() { this.reset(); }
+            reset() {
+                this.x = Math.random() * pCanvas.width;
+                this.y = Math.random() * pCanvas.height;
+                this.size = Math.random() * 4 + 1;
+                this.speedX = (Math.random() - 0.5) * 0.5;
+                this.speedY = Math.random() * -0.8 - 0.2;
+                this.opacity = Math.random() * 0.15 + 0.05;
+                this.hue = Math.random() > 0.5 ? 200 : 340; // mavi veya pembe
+            }
+            update() {
+                this.x += this.speedX;
+                this.y += this.speedY;
+                if (this.y < -10 || this.x < -10 || this.x > pCanvas.width + 10) this.reset();
+                if (this.y < -10) { this.y = pCanvas.height + 10; }
+            }
+            draw() {
+                pCtx.beginPath();
+                pCtx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                pCtx.fillStyle = `hsla(${this.hue}, 80%, 70%, ${this.opacity})`;
+                pCtx.fill();
+            }
+        }
+
+        for (let i = 0; i < 60; i++) particles.push(new Particle());
+
+        function animateParticles() {
+            pCtx.clearRect(0, 0, pCanvas.width, pCanvas.height);
+            particles.forEach(p => { p.update(); p.draw(); });
+            requestAnimationFrame(animateParticles);
+        }
+        animateParticles();
+
+        // ============ 2. ATEŞ İMLECİ ============
+        const fireCursor = document.getElementById('fire-cursor');
+        let mouseX = window.innerWidth / 2, mouseY = window.innerHeight / 2;
+        let curX = mouseX, curY = mouseY;
+        document.addEventListener('mousemove', e => { mouseX = e.clientX; mouseY = e.clientY; });
+        // Yumuşak takip (lerp) — left/top ile pixel-perfect hizalama
+        function updateCursor() {
+            curX += (mouseX - curX) * 0.12;
+            curY += (mouseY - curY) * 0.12;
+            // 175 = yarıçap (350px / 2) — imleci tam merkeze hizalar
+            fireCursor.style.left = (curX - 175) + 'px';
+            fireCursor.style.top = (curY - 175) + 'px';
+            requestAnimationFrame(updateCursor);
+        }
+        updateCursor();
+
+        // ============ 3. GRAFİK ============
+        const ctx = document.getElementById('tempChart').getContext('2d');
+        const tempChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: Array(25).fill(''),
+                datasets: [{
+                    data: Array(25).fill(null),
+                    borderColor: '#10b981',
+                    backgroundColor: 'rgba(16,185,129,0.15)',
+                    borderWidth: 3, tension: 0.45, fill: true,
+                    pointRadius: 0, pointHitRadius: 10
+                }]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                animation: { duration: 600, easing: 'easeOutQuart' },
+                scales: { x: { display: false }, y: { display: false, min: 35.5, max: 40 } },
+                plugins: { legend: { display: false }, tooltip: { enabled: false } }
+            }
+        });
+
+        // ============ 4. DOM & MQTT ============
+        const card = document.getElementById('main-card');
+        const animPlayer = document.getElementById('baby-anim');
+        const tempMsg = document.getElementById('temp-message');
+        const statusDot = document.getElementById('status-dot');
+        const pulseRing = document.getElementById('pulse-ring');
+        const historyList = document.getElementById('history-list');
+        const liveTempEl = document.getElementById('live-temp');
+
+        const anims = {
+            sleep: "https://assets3.lottiefiles.com/packages/lf20_4wscw465.json",
+            happy: "https://assets9.lottiefiles.com/packages/lf20_vnik4t9m.json",
+            cry: "https://assets10.lottiefiles.com/packages/lf20_mjm535.json"
+        };
+
+        let historyData = [];
+
+        const client = mqtt.connect('wss://broker.hivemq.com:8884/mqtt');
+
+        client.on('connect', () => {
+            statusDot.innerHTML = '<span class="w-2.5 h-2.5 bg-green-500 rounded-full mr-2 animate-pulse border-2 border-white"></span> CANLI';
+            statusDot.className = 'flex items-center text-[11px] font-bold text-green-600 bg-green-100 px-3 py-1.5 rounded-full shadow-inner transition-all duration-500';
+            client.subscribe('proje_besik_2026/telemetry/veri');
+        });
+
+        client.on('error', () => {
+            statusDot.innerHTML = '<span class="w-2.5 h-2.5 bg-red-500 rounded-full mr-2 border-2 border-white"></span> KOPTU';
+            statusDot.className = 'flex items-center text-[11px] font-bold text-red-600 bg-red-100 px-3 py-1.5 rounded-full shadow-inner transition-all duration-500';
+        });
+
+        client.on('message', (topic, message) => {
+            try {
+                const data = JSON.parse(message.toString());
+                if (data.tip !== 'veri') return;
+                const temp = data.temp;
+                const minV = (data.veri_min || temp);
+                const maxV = (data.veri_max || temp);
+
+                // Sıcaklık Güncelle + Bounce Animasyonu
+                liveTempEl.innerHTML = `${temp.toFixed(1)}<span class="text-5xl text-gray-300 relative -top-8">°C</span>`;
+                liveTempEl.classList.remove('temp-pop');
+                void liveTempEl.offsetWidth; // reflow trick
+                liveTempEl.classList.add('temp-pop');
+
+                document.getElementById('min-temp').innerText = minV.toFixed(1) + '°';
+                document.getElementById('max-temp').innerText = maxV.toFixed(1) + '°';
+
+                // Grafik Güncelle
+                let cd = tempChart.data.datasets[0].data;
+                cd.push(temp);
+                if (cd.length > 25) cd.shift();
+
+                let lc = '#10b981', bg = 'rgba(16,185,129,0.3)';
+                if (temp >= 38) { lc = '#ef4444'; bg = 'rgba(239,68,68,0.3)'; }
+                else if (temp >= 37.3) { lc = '#f59e0b'; bg = 'rgba(245,158,11,0.3)'; }
+
+                tempChart.data.datasets[0].borderColor = lc;
+                const gr = ctx.createLinearGradient(0, 0, 0, 100);
+                gr.addColorStop(0, bg); gr.addColorStop(1, 'rgba(255,255,255,0)');
+                tempChart.data.datasets[0].backgroundColor = gr;
+                tempChart.update();
+
+                // Geçmiş Veriler Listesi
+                const now = new Date();
+                const timeStr = now.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                historyData.unshift({ temp, time: timeStr });
+                if (historyData.length > 15) historyData.pop();
+                renderHistory();
+
+                // Durum & Nabız Halkası Rengi
+                card.classList.remove('glow-normal', 'glow-risk', 'glow-emergency');
+                tempMsg.classList.remove('text-green-600', 'text-yellow-600', 'text-red-600', 'text-gray-400');
+
+                if (temp >= 38) {
+                    card.classList.add('glow-emergency');
+                    tempMsg.classList.add('text-red-600');
+                    tempMsg.innerText = "YÜKSEK ATEŞ UYARISI!";
+                    pulseRing.style.borderColor = 'rgba(239,68,68,0.5)';
+                    if (animPlayer.getAttribute('src') !== anims.cry) animPlayer.load(anims.cry);
+                } else if (temp >= 37.3) {
+                    card.classList.add('glow-risk');
+                    tempMsg.classList.add('text-yellow-600');
+                    tempMsg.innerText = "Hafif ateş var, takip ediliyor.";
+                    pulseRing.style.borderColor = 'rgba(245,158,11,0.5)';
+                    if (animPlayer.getAttribute('src') !== anims.happy) animPlayer.load(anims.happy);
+                } else {
+                    card.classList.add('glow-normal');
+                    tempMsg.classList.add('text-green-600');
+                    tempMsg.innerText = "Sıcaklık normal, bebek huzurlu.";
+                    pulseRing.style.borderColor = 'rgba(34,197,94,0.4)';
+                    if (animPlayer.getAttribute('src') !== anims.sleep) animPlayer.load(anims.sleep);
+                }
+            } catch (e) { console.error("Parse Error", e); }
+        });
+
+        function renderHistory() {
+            historyList.innerHTML = '';
+            historyData.forEach((item, i) => {
+                let color = 'bg-green-100 text-green-700';
+                let dot = 'bg-green-400';
+                if (item.temp >= 38) { color = 'bg-red-100 text-red-700'; dot = 'bg-red-400'; }
+                else if (item.temp >= 37.3) { color = 'bg-yellow-100 text-yellow-700'; dot = 'bg-yellow-400'; }
+
+                const row = document.createElement('div');
+                row.className = `history-row flex items-center justify-between ${color} px-4 py-2 rounded-2xl text-xs font-bold`;
+                row.style.animationDelay = `${i * 0.05}s`;
+                row.innerHTML = `
+                    <div class="flex items-center gap-2">
+                        <span class="w-2 h-2 rounded-full ${dot}"></span>
+                        <span>${item.time}</span>
+                    </div>
+                    <span>${item.temp.toFixed(1)}°C</span>
+                `;
+                historyList.appendChild(row);
+            });
+        }
+    </script>
+</body>
+
+</html>
