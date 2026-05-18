@@ -481,7 +481,15 @@
                 const temp = data.temp;
                 const minV = (data.veri_min || temp);
                 const maxV = (data.veri_max || temp);
-
+ // --- BİLDİRİM KODU BAŞLANGICI ---
+                if (data.anlik_durum) {
+                    if (data.anlik_durum === "Görüş Engellendi / Müdahale") {
+                        alert("⚠️ BİLDİRİM: Beşiğe fiziksel bir müdahale var veya ebeveyn nefesi algılandı!");
+                    } else if (data.anlik_durum === "Ortamda Ani Hava Değişimi") {
+                        alert("💨 DİKKAT: Ortamda ani hava değişimi var. Bebek üşüyebilir!");
+                    }
+                }
+                // --- BİLDİRİM KODU BİTİŞİ ---
                 // Sıcaklık Güncelle + Bounce Animasyonu
                 liveTempEl.innerHTML = `${temp.toFixed(1)}<span class="text-5xl text-gray-300 relative -top-8">°C</span>`;
                 liveTempEl.classList.remove('temp-pop');
