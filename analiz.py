@@ -5,7 +5,7 @@ import os
 from datetime import datetime, timezone
 import paho.mqtt.client as mqtt
 from pymongo import MongoClient
-from dotenv import load_dotenv  # Arkadaşından aldığımız standart kütüphane
+from dotenv import load_dotenv  
 
 # ===============================
 # ENV OKU (.env dosyasını güvenli yükler)
@@ -72,16 +72,15 @@ def on_message(client, userdata, msg):
         return
 
     # ==========================================
-    # 1. GRUPTAN GELEN VERİLERİ ALIYORUZ
+    # GELEN VERİLERİ ALIYORUZ
     # ==========================================
     ortam_sicakligi = data.get("ortam_sicakligi", 24.0)
     bebek_sicakliklari = data.get("bebek_sicakliklari", [])
 
-    # DÜZELTME: Matrisi en başta her halükarda çekiyoruz ki analiz kaydında hata vermesin!
+    # Matrisi en başta her halükarda çekiyoruz ki analiz kaydında hata vermesin!
     raw_matrix = data.get("sicaklik_matrisi", data.get("temiz_matris", []))
 
-
-    # --- YENİ ÖZELLİK: ETKEN (DURUM) ANALİZİ ---
+    # ETKEN (DURUM) ANALİZİ 
     gelen_etken = data.get("etken", "Stabil")
     if "Nefes" in gelen_etken or "Ebeveyn" in gelen_etken:
         kullanici_dostu_etken = "Görüş Engellendi / Müdahale"
@@ -90,23 +89,21 @@ def on_message(client, userdata, msg):
     else:
         kullanici_dostu_etken = "Stabil (Normal)"
 
-    # --- KVKK: Kimlik Anonimleştirme (Pseudonymization) ---
+    # KVKK: Kimlik Anonimleştirme (Pseudonymization)
     ham_cihaz_id = data.get("cihaz_id", "bilinmeyen_cihaz")
     # Cihaz ID'yi alıp 16 haneli kırılamaz bir koda çeviriyoruz
     anonim_hasta_id = hashlib.sha256(ham_cihaz_id.encode('utf-8')).hexdigest()[:16]
 
-    # Arkadaşının "hata yakalama" mantığını senin "kurtarma" mantığınla birleştiriyoruz:
+    # Kurtarma Mantığı:
     if len(bebek_sicakliklari) == 0:
-        print("⚠ DİKKAT: Donanım ekibi 'bebek_sicakliklari' listesini eksik yolladı!")
-        print("🛠️ Python Kurtarma Algoritması Devrede: Matris manuel taranıyor...")
         bebek_sicakliklari = [sicaklik for sicaklik in raw_matrix if sicaklik > 32.0] 
 
-    # GÜVENLİK KİLİDİ: Yedek plana rağmen hala bebek (32 dereceden yüksek ısı) yoksa beşik boştur.
+    # GÜVENLİK KİLİDİ: Yedek plana rağmen hala bebek yoksa beşik boştur.
     if len(bebek_sicakliklari) == 0:
         print("Uyarı: Beşikte bebek algılanmadı! 🚼")
         return
 
-    # 1. HAM DEĞERLERİ BULALIM (SIFIRA BÖLÜNME HATASI ÇÖZÜLDÜ ✅)
+    # 1. HAM DEĞERLERİ BULUYORUZ (SIFIRA BÖLÜNME HATASI ÇÖZÜLDÜ ✅)
     ham_bebek_atesi = sum(bebek_sicakliklari) / len(bebek_sicakliklari)
 
     # 2. BİLİMSEL KALİBRASYON (OFFSET / TELAFİ)
@@ -118,72 +115,79 @@ def on_message(client, userdata, msg):
         sicaklik_farki = ortam_sicakligi - 26.0
         offset = -(sicaklik_farki * 0.1)
 
-# 3. GERÇEK ÇEKİRDEK ATEŞİNİ HESAPLAMA (DİNAMİK BİYOLOJİK EĞRİ)
-    # İnsan ateşi yükseldikçe damarlar genişler (vazodilatasyon), deri ısınır ve çekirdek ile deri arasındaki fark azalır.
+    # 3. GERÇEK ÇEKİRDEK ATEŞİNİ HESAPLAMA (DİNAMİK BİYOLOJİK EĞRİ)
     if ham_bebek_atesi <= 34.5:
-        TIBBI_OFFSET = 2.5  # Sağlıklı bebek: Deri serin, iç-dış farkı standart.
+        TIBBI_OFFSET = 2.5  
     elif ham_bebek_atesi <= 36.0:
-        TIBBI_OFFSET = 1.8  # Isınan bebek: Deri sıcaklığı artıyor, fark kapanmaya başlıyor.
+        TIBBI_OFFSET = 1.8  
     else:
-        TIBBI_OFFSET = 1.2  # Ateşli bebek: Deri çok sıcak, iç-dış farkı minimumda.
+        TIBBI_OFFSET = 1.2  
 
     temp = ham_bebek_atesi + offset + TIBBI_OFFSET
-    
     min_val = min(bebek_sicakliklari) + offset + TIBBI_OFFSET
     max_val = max(bebek_sicakliklari) + offset + TIBBI_OFFSET
-
-    # TERMİNALDE ŞOV YAPALIM: Durumu da ekrana yazdırıyoruz!
-    print(f"Ham Ten: {ham_bebek_atesi:.2f} | Oda: {ortam_sicakligi:.2f} | Durum: {kullanici_dostu_etken} | Gerçek Ateş: {temp:.2f}")  
       
     now = datetime.now(timezone.utc)
     temp_buffer.append(temp)
 
     # ==========================================
-    # GÖREV 1: ANLIK VERİYİ "TEK KANALA" GÖNDER
-    # ==========================================
-    veri_payload = {
-        "tip": "veri",  # 3. grup bunu görüp canlı rakamı güncelleyecek
-        "temp": round(temp, 1),
-        "veri_min": round(min_val, 1),
-        "veri_max": round(max_val, 1),
-        "anlik_durum": kullanici_dostu_etken  # WEB SİTESİNE GİDEN YENİ VERİ
-    }
-    client.publish(TOPIC_OUT + "/veri", json.dumps(veri_payload))
-
-    # ==========================================
-    # GÖREV 2: ÖZET VERİYİ AYNI "TEK KANALA" GÖNDER
+    # --- ZAMAN, STABİLİTE VE SAYAÇ HESAPLARI ---
     # ==========================================
     gecen_sure_saniye = (now - last_summary_time).total_seconds()
     
-    # STABİLİTE KONTROLÜ
     is_stable = False
     if len(temp_buffer) >= 5: 
         if max(temp_buffer) < 37.0 and (max(temp_buffer) - min(temp_buffer)) <= 0.4:
             is_stable = True
 
     bekleme_suresi = 900 if is_stable else 180
+    kalan_sure = max(0, int(bekleme_suresi - gecen_sure_saniye))
 
+    # --- GÖRSEL TAKİP EKRANI ---
+    if temp >= 37.0:
+        mod_bilgisi = "🚨 ACİL MOD (Bekleme İptal, Anında Kayıt!)"
+    elif is_stable:
+        mod_bilgisi = f"💤 15dk YAVAŞ MOD (Dinlenme. Özete: {kalan_sure}sn)"
+    else:
+        mod_bilgisi = f"⚡ 3dk HIZLI MOD (Takip. Özete: {kalan_sure}sn)"
+
+    print(f"[ANLIK] Ham: {ham_bebek_atesi:.2f} | Oda: {ortam_sicakligi:.2f} | Durum: {kullanici_dostu_etken} | Gerçek Ateş: {temp:.2f} | {mod_bilgisi}")
+
+    # ==========================================
+    # ANLIK VERİYİ "TEK KANALA" GÖNDER
+    # ==========================================
+    veri_payload = {
+        "tip": "veri",  
+        "temp": round(temp, 1),
+        "veri_min": round(min_val, 1),
+        "veri_max": round(max_val, 1),
+        "anlik_durum": kullanici_dostu_etken  
+    }
+    client.publish(TOPIC_OUT + "/veri", json.dumps(veri_payload))
+
+    # ==========================================
+    # ÖZET VERİYİ AYNI "TEK KANALA" GÖNDER
+    # ==========================================
     if gecen_sure_saniye >= bekleme_suresi or temp >= 37.0:
         alarm = simple_alarm(temp)
         ortalama_ates = sum(temp_buffer) / len(temp_buffer)
         
         ozet_payload = {
             "tip": "ozet_kayit",
-            "hasta_anonim_id": anonim_hasta_id,  # Gerçek kimlik yerine şifreli kod gidiyor
-            "kvkk_uyumlu_analitik": True,        # Jüri görsün diye eklenen güvenlik etiketi
+            "hasta_anonim_id": anonim_hasta_id,  
+            "kvkk_uyumlu_analitik": True,        
             "ortalama_ates": round(ortalama_ates, 1),
             "periyot_min": round(min(temp_buffer), 1),
             "periyot_max": round(max(temp_buffer), 1),
-            "olcum_modu": "YAVAŞ / 15dk" if is_stable else "HIZLI / 3dk VEYA ACİL",
+            "olcum_modu": "ACİL DURUM / ANINDA" if temp >= 37.0 else ("HIZLI TAKİP / 3dk" if not is_stable else "YAVAŞ / 15dk"),
             "renk": alarm["color"].lower(),
             "mesaj": alarm["message"],
-            "son_bilinen_durum": kullanici_dostu_etken, # MONGO'YA GİDEN YENİ VERİ,
+            "son_bilinen_durum": kullanici_dostu_etken, 
             "timestamp": now.isoformat(),
             "room_temp": ortam_sicakligi,
-            "raw_data": raw_matrix  # Sadece anonimleştirilmiş analizler için tutuluyor
+            "raw_data": raw_matrix  
         }
 
-        # DİKKAT: Özet de aynı /veri kanalına gidiyor!
         client.publish(TOPIC_OUT + "/veri", json.dumps(ozet_payload))
         print(f"🚀 ÖZET VERİ OLUŞTURULDU! Mod: {ozet_payload['olcum_modu']} | Ortalama: {ozet_payload['ortalama_ates']}")
 
@@ -204,15 +208,11 @@ def on_message(client, userdata, msg):
 # ===============================
 client = mqtt.Client()
 
-# --- KVKK: İLETİM GÜVENLİĞİ (TLS TÜNELİ) AKTİF EDİLİYOR ---
-# (HiveMQ gibi public sunucularda sertifika sormadan TLS tüneli açar)
 client.tls_set(cert_reqs=ssl.CERT_NONE) 
 
 client.on_connect = on_connect
 client.on_message = on_message
 
-# DİKKAT: TLS kullanacağımız için MQTT_PORT değerinin .env dosyasında 
-# 1883 yerine 8883 olduğundan emin ol. (HiveMQ güvenli portu 8883'tür).
 print("Broker'a güvenli (TLS) bağlanılıyor:", MQTT_HOST, MQTT_PORT)
 client.connect(MQTT_HOST, MQTT_PORT, 60)
 client.loop_forever()
